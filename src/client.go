@@ -2,84 +2,140 @@ package src
 
 import (
 	"bytes"
-	"encoding/json"
+	"context"
+	"crypto/tls"
 	"fmt"
+	"io"
 	"net/http"
+	"net/http/cookiejar"
 	"net/url"
 	"strings"
 	"time"
 )
 
-type TrackProjectRequest struct {
-	ProjectSlug string `json:"projectSlug"`
-	ProjectType string `json:"projectType"`
-	UserID      string `json:"userId"`
-	ZealyUserID string `json:"zealyUserId"`
+type RequestOptions struct {
+	Method     string
+	URL        string
+	Headers    map[string]string
+	Body       []byte
+	ProxyURL   string
+	Timeout    time.Duration
+	SkipVerify bool
+	BasicAuth  *BasicAuth
 }
 
-type TrackProjectResponse struct {
-	Message string `json:"message"`
+type BasicAuth struct {
+	Username string
+	Password string
 }
 
-func TrackProjectWithProxy(proxy string, projectSlug, projectType, userID, zealyUserID string) (string, error) {
-	proxyParts := strings.Split(proxy, "@")
-	if len(proxyParts) != 2 {
-		return "", fmt.Errorf("Error format proxy")
+type Response struct {
+	StatusCode int
+	Headers    map[string]string
+	Body       []byte
+	Cookies    []*http.Cookie
+	Error      error
+}
+
+func MakeRequest(opts RequestOptions) (*Response, error) {
+	if opts.Method == "" {
+		opts.Method = "GET"
+	}
+	if opts.Timeout == 0 {
+		opts.Timeout = 30 * time.Second
 	}
 
-	auth := proxyParts[0]
-	hostPort := proxyParts[1]
+	ctx, cancel := context.WithTimeout(context.Background(), opts.Timeout)
+	defer cancel()
 
-	proxyURL, err := url.Parse(fmt.Sprintf("http://%s", hostPort))
+	jar, err := cookiejar.New(nil)
 	if err != nil {
-		return "", fmt.Errorf("Error with link proxy: %v", err)
+		return &Response{Error: err}, err
 	}
 
-	if auth != "" {
-		proxyURL.User = url.UserPassword(strings.Split(auth, ":")[0], strings.Split(auth, ":")[1])
-	}
-
-	transport := &http.Transport{
-		Proxy: http.ProxyURL(proxyURL),
-	}
 	client := &http.Client{
-		Transport: transport,
-		Timeout:   30 * time.Second,
+		Timeout: opts.Timeout,
+		Jar:     jar,
 	}
 
-	payload := TrackProjectRequest{
-		ProjectSlug: projectSlug,
-		ProjectType: projectType,
-		UserID:      userID,
-		ZealyUserID: zealyUserID,
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+
+	if opts.ProxyURL != "" {
+		var proxyURL *url.URL
+		var err error
+
+		if strings.Contains(opts.ProxyURL, "@") && !strings.HasPrefix(opts.ProxyURL, "http://") && !strings.HasPrefix(opts.ProxyURL, "https://") {
+			parts := strings.Split(opts.ProxyURL, "@")
+			if len(parts) == 2 {
+				auth := parts[0]
+				hostPort := parts[1]
+
+				formattedProxyURL := fmt.Sprintf("http://%s@%s", auth, hostPort)
+				proxyURL, err = url.Parse(formattedProxyURL)
+			} else {
+				err = fmt.Errorf("invalid proxy format: %s", opts.ProxyURL)
+			}
+		} else {
+			proxyURL, err = url.Parse(opts.ProxyURL)
+		}
+
+		if err != nil {
+			return &Response{Error: err}, err
+		}
+		transport.Proxy = http.ProxyURL(proxyURL)
 	}
 
-	jsonPayload, err := json.Marshal(payload)
+	if opts.SkipVerify {
+		if transport.TLSClientConfig == nil {
+			transport.TLSClientConfig = &tls.Config{
+				InsecureSkipVerify: true,
+			}
+		} else {
+			transport.TLSClientConfig.InsecureSkipVerify = true
+		}
+	}
+
+	client.Transport = transport
+
+	req, err := http.NewRequestWithContext(ctx, opts.Method, opts.URL, bytes.NewReader(opts.Body))
 	if err != nil {
-		return "", fmt.Errorf("Error JSON: %v", err)
+		return &Response{Error: err}, err
 	}
 
-	req, err := http.NewRequest("POST", "https://speedrun.enso.build/api/track-project-creation", bytes.NewBuffer(jsonPayload))
-	if err != nil {
-		return "", fmt.Errorf("Error request: %v", err)
+	for key, value := range opts.Headers {
+		req.Header.Set(key, value)
 	}
 
-	req.Header.Set("Content-Type", "application/json")
+	if opts.BasicAuth != nil {
+		req.SetBasicAuth(opts.BasicAuth.Username, opts.BasicAuth.Password)
+	}
 
 	resp, err := client.Do(req)
 	if err != nil {
-		return "", fmt.Errorf("Error process request: %v", err)
+		return &Response{Error: err}, err
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode != 200 {
-		return "", fmt.Errorf("Error code status: %d", resp.StatusCode)
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return &Response{Error: err}, err
 	}
 
-	var response TrackProjectResponse
-	if err := json.NewDecoder(resp.Body).Decode(&response); err != nil {
-		return "", fmt.Errorf("Error parse response: %v", err)
+	headers := make(map[string]string)
+	for key, values := range resp.Header {
+		if len(values) > 0 {
+			headers[key] = values[0]
+		}
 	}
 
-	return response.Message, nil
+	cookies := resp.Cookies()
+
+	response := &Response{
+		StatusCode: resp.StatusCode,
+		Headers:    headers,
+		Body:       body,
+		Cookies:    cookies,
+	}
+
+	return response, nil
 }

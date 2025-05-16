@@ -4,7 +4,7 @@ Format files:
 
 **data.txt**
 ```
-address:zealyUUID
+privateKey:zealyUUID
 ```
 
 **proxy.txt**

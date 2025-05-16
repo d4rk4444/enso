@@ -7,6 +7,7 @@ import (
 	"math/rand"
 	"os"
 	"strings"
+	"time"
 )
 
 func GenerateRandomAmount(min *big.Int, max *big.Int, decimal int) (*big.Int, error) {
@@ -40,6 +41,10 @@ func GenerateRandomAmount(min *big.Int, max *big.Int, decimal int) (*big.Int, er
 	return resultInt, nil
 }
 
+func Timeout(ms int) {
+	time.Sleep(time.Duration(ms) * time.Millisecond)
+}
+
 func ParseFile(file string) ([]string, error) {
 	f, err := os.Open(file)
 	if err != nil {
@@ -65,4 +70,11 @@ func ParseFile(file string) ([]string, error) {
 	}
 
 	return lines, nil
+}
+
+func GetCurrentISOTime() string {
+	currentTime := time.Now().UTC()
+	isoTime := currentTime.Format("2006-01-02T15:04:05.000Z")
+
+	return isoTime
 }
