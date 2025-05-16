@@ -73,7 +73,7 @@ func main() {
 		}
 
 		//TRANSACTION AI
-		for n := 0; n < 1; {
+		for n := 0; n < 5; {
 			rpcURL := "https://base.llamarpc.com"
 
 			client, err := ethclient.Dial(rpcURL)
@@ -129,12 +129,17 @@ func main() {
 		}
 
 		//CREATE DEX
-		result := ai.TrackProject(projectSlug, "shortcuts-widget", address, uuid, proxy[i])
-		if err != nil {
-			fmt.Printf("Error TrackProjectWithProxy %s: %v\n", proxy, err)
-			continue
-		}
+		for n := 0; n < 5; {
+			result := ai.TrackProject(projectSlug, "shortcuts-widget", address, uuid, proxy[i])
+			if err != nil {
+				fmt.Printf("Error TrackProjectWithProxy %s: %v\n", proxy, err)
+				continue
+			}
 
-		log.Printf("%v: %v. Create %v", address, result, projectSlug)
+			if result == "You've earned points for creating a project!" {
+				log.Printf("%v: %v. Create %v %v", address, result, n+1, projectSlug)
+				n++
+			}
+		}
 	}
 }
